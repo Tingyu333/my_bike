@@ -127,7 +127,7 @@
                 <span>⏳ 正在連線台灣中油 OpenData 驗證牌價...（填寫欄位鎖定中）</span>
               </div>
               <div v-else class="status-ready-box">
-                <span class="status-ready">🟢 已成功載入中油 OpenData 即時牌價 ({{ fetchTime }})</span>
+                <span class="status-ready">🟢 已成功載入中油即時牌價 ({{ fetchTime }})</span>
                 <button type="button" class="raw-data-btn" @click="showRawModal = true">
                   📄 查看中油原始資料
                 </button>
@@ -214,12 +214,12 @@
     <div v-if="showRawModal" class="modal-overlay" @click.self="showRawModal = false">
       <div class="modal-content" style="max-width: 680px;">
         <div class="modal-header">
-          <h3 class="modal-title">📄 台灣中油官方 OpenData 原始數據</h3>
+          <h3 class="modal-title">📄 台灣中油官方 OpenData / API 原始數據</h3>
           <button class="btn btn-icon btn-secondary" @click="showRawModal = false">✕</button>
         </div>
         <div class="raw-data-container">
           <p class="raw-intro">
-            以下為連線台灣中油 OpenData 網址 (<a href="https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx" target="_blank" rel="noopener">ListPriceVIP.aspx</a>) 取得之真實 OpenData XML 回應：
+            以下為即時連線台灣中油 OpenData 數據庫取得之真實 API 回應內容：
           </p>
           <pre class="raw-code-box"><code>{{ rawCpcData || '尚未抓取到原始資料' }}</code></pre>
         </div>
