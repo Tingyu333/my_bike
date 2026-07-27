@@ -116,8 +116,14 @@
                 :disabled="isFetchingPrices"
                 @click="loadCpcPrices"
               >
-                {{ isFetchingPrices ? '抓取中...' : '🔄 同步中油即時油價' }}
+                {{ isFetchingPrices ? '抓取中...' : '🔄 重新抓取' }}
               </button>
+            </div>
+
+            <!-- Live CPC Status Indicator -->
+            <div v-if="inputMode === 'CPC'" class="cpc-status-bar">
+              <span v-if="isFetchingPrices" class="status-fetching">⏳ 正在連線台灣中油官方伺服器抓取本週油價...</span>
+              <span v-else class="status-ready">🟢 已連線中油官方 OpenData（最新油價 95: ${{ formatted95 }} / 92: ${{ formatted92 }} / 98: ${{ formatted98 }}）</span>
             </div>
 
             <!-- CPC Fuel Type & Price Calculator -->
@@ -126,9 +132,9 @@
                 <div class="form-group">
                   <label class="form-label">選擇中油油種</label>
                   <select v-model="selectedFuelType" class="form-control form-select" @change="onFuelTypeChange">
-                    <option value="95">95 無鉛汽油 (NT$ {{ cpcPrices['95'] }} / L)</option>
-                    <option value="92">92 無鉛汽油 (NT$ {{ cpcPrices['92'] }} / L)</option>
-                    <option value="98">98 無鉛汽油 (NT$ {{ cpcPrices['98'] }} / L)</option>
+                    <option value="95">95 無鉛汽油 (NT$ {{ formatted95 }} / L)</option>
+                    <option value="92">92 無鉛汽油 (NT$ {{ formatted92 }} / L)</option>
+                    <option value="98">98 無鉛汽油 (NT$ {{ formatted98 }} / L)</option>
                     <option value="CUSTOM">自訂每升單價...</option>
                   </select>
                 </div>
@@ -137,7 +143,7 @@
                   <input 
                     v-model.number="unitPrice" 
                     type="number" 
-                    step="0.01" 
+                    step="0.1" 
                     min="1" 
                     class="form-control" 
                     @input="calculateLiters"
@@ -191,7 +197,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { fetchCpcOfficialPrices } from '../services/api.js';
 
 const props = defineProps({
@@ -216,12 +222,15 @@ const inputMode = ref('CPC');
 const selectedFuelType = ref('95');
 const unitPrice = ref(31.0);
 
-// 中油官方牌價
 const cpcPrices = ref({
   '92': 29.5,
   '95': 31.0,
   '98': 33.0
 });
+
+const formatted95 = computed(() => Number(cpcPrices.value['95']).toFixed(1));
+const formatted92 = computed(() => Number(cpcPrices.value['92']).toFixed(1));
+const formatted98 = computed(() => Number(cpcPrices.value['98']).toFixed(1));
 
 const form = ref({
   id: '',
@@ -238,9 +247,9 @@ async function loadCpcPrices() {
     const livePrices = await fetchCpcOfficialPrices();
     if (livePrices) {
       cpcPrices.value = {
-        '92': livePrices['92'] || 29.5,
-        '95': livePrices['95'] || 31.0,
-        '98': livePrices['98'] || 33.0
+        '92': Number(livePrices['92'] || 29.5),
+        '95': Number(livePrices['95'] || 31.0),
+        '98': Number(livePrices['98'] || 33.0)
       };
       if (selectedFuelType.value !== 'CUSTOM' && cpcPrices.value[selectedFuelType.value]) {
         unitPrice.value = cpcPrices.value[selectedFuelType.value];
@@ -271,7 +280,6 @@ function onFuelTypeChange() {
 function calculateLiters() {
   if (inputMode.value === 'CPC' && form.value.cost > 0 && unitPrice.value > 0) {
     const l = form.value.cost / unitPrice.value;
-    // 取小數點後 3 位精確值
     form.value.liters = Number(l.toFixed(3));
   }
 }
@@ -351,7 +359,7 @@ function openAddModal() {
     cost: ''
   };
   showModal.value = true;
-  loadCpcPrices(); // Auto fetch live prices when modal opens
+  loadCpcPrices();
 }
 
 function openEditModal(log) {
@@ -387,6 +395,10 @@ function confirmDelete(id) {
     emit('delete-fuel', id);
   }
 }
+
+onMounted(() => {
+  loadCpcPrices();
+});
 
 defineExpose({ openAddModal });
 </script>
@@ -501,7 +513,7 @@ defineExpose({ openAddModal });
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   gap: 8px;
 }
 
@@ -533,6 +545,23 @@ defineExpose({ openAddModal });
 .refresh-btn {
   white-space: nowrap;
   font-size: 0.78rem;
+}
+
+.cpc-status-bar {
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  background: rgba(16, 185, 129, 0.1);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+}
+
+.status-ready {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.status-fetching {
+  color: var(--accent-cyan);
 }
 
 .cpc-calc-panel {
