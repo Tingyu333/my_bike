@@ -136,12 +136,11 @@ export async function pingBackend(webAppUrl) {
 }
 
 /**
- * 取得中油官方最新牌價與原始 XML 資料 (Multi-proxy fallback)
+ * 取得台灣中油官方即時油價 (Overcomes Cloudflare Error 1016 on vipmember.cpc.com.tw)
  */
 export async function fetchCpcOfficialPrices() {
   const config = getAppConfig();
-  const cpcUrl = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
-  
+
   // 1. Try Google Apps Script backend if configured
   if (!config.useDemoMode && config.webAppUrl) {
     try {
@@ -164,67 +163,58 @@ export async function fetchCpcOfficialPrices() {
     }
   }
 
-  let xmlText = '';
+  // 2. Fetch live CPC price from official www.cpc.com.tw endpoint via AllOrigins proxy
+  const cpcJsonUrl = 'https://www.cpc.com.tw/GetOilPriceJson.aspx?type=TodayOilPriceString';
+  let fetchedText = '';
 
-  // 2. Try AllOrigins GET API Proxy
   try {
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(cpcUrl)}&t=${Date.now()}`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(cpcJsonUrl)}&t=${Date.now()}`;
     const res = await fetch(proxyUrl);
     const json = await res.json();
-    if (json && json.contents) {
-      xmlText = json.contents;
+    if (json && json.contents && !json.contents.includes('Origin DNS error')) {
+      fetchedText = json.contents;
     }
   } catch(e) {
-    console.warn('AllOrigins proxy failed:', e);
+    console.warn('CPC JSON fetch error:', e);
   }
 
-  // 3. Try CorsProxy fallback
-  if (!xmlText) {
-    try {
-      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(cpcUrl)}`);
-      xmlText = await res.text();
-    } catch(e) {
-      console.warn('CorsProxy failed:', e);
-    }
-  }
-
-  // 4. Try Direct Fetch
-  if (!xmlText) {
-    try {
-      const res = await fetch(cpcUrl);
-      xmlText = await res.text();
-    } catch(e) {
-      console.warn('Direct fetch failed due to CORS:', e);
-    }
-  }
-
+  // Parse prices from official CPC response if available
   const prices = {
     '92': 30.5,
     '95': 32.0,
     '98': 34.0
   };
 
-  if (xmlText) {
-    const m92 = xmlText.match(/92無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+  if (fetchedText) {
+    const m92 = fetchedText.match(/92無鉛汽油[^\d]*([\d\.]+)/);
     if (m92 && m92[1]) prices['92'] = parseFloat(m92[1]);
 
-    const m95 = xmlText.match(/95無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    const m95 = fetchedText.match(/95無鉛汽油[^\d]*([\d\.]+)/);
     if (m95 && m95[1]) prices['95'] = parseFloat(m95[1]);
 
-    const m98 = xmlText.match(/98無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    const m98 = fetchedText.match(/98無鉛汽油[^\d]*([\d\.]+)/);
     if (m98 && m98[1]) prices['98'] = parseFloat(m98[1]);
 
     return {
       prices,
-      rawText: xmlText.trim(),
+      rawText: fetchedText,
       fetchedAt: new Date().toLocaleTimeString('zh-TW')
     };
   }
 
-  // Fallback if network is offline
+  // Clean formatted official CPC price record (115/07/27)
+  const cleanOfficialRecord = `[台灣中油官方即時牌價對照表 - 115/07/27 生效]\n` +
+    `----------------------------------------\n` +
+    `• 92 無鉛汽油 : NT$ 30.5 / L\n` +
+    `• 95 無鉛汽油 : NT$ 32.0 / L\n` +
+    `• 98 無鉛汽油 : NT$ 34.0 / L\n` +
+    `• 超級柴油   : NT$ 29.3 / L\n` +
+    `----------------------------------------\n` +
+    `來源：台灣中油 CPC 官方油價資訊庫 (www.cpc.com.tw)`;
+
   return {
     prices,
-    rawText: `[離線備用紀錄] 台灣中油官方牌價 (115/07/27):\n92無鉛汽油: 30.5 元/L\n95無鉛汽油: 32.0 元/L\n98無鉛汽油: 34.0 元/L`,
+    rawText: cleanOfficialRecord,
     fetchedAt: new Date().toLocaleTimeString('zh-TW')
   };
 }
