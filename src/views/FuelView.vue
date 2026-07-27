@@ -120,10 +120,18 @@
               </button>
             </div>
 
-            <!-- Live CPC Status Indicator -->
-            <div v-if="inputMode === 'CPC'" class="cpc-status-bar">
-              <span v-if="isFetchingPrices" class="status-fetching">⏳ 正在連線台灣中油官方 OpenData...</span>
-              <span v-else class="status-ready">🟢 已與中油官方牌價同步（95: ${{ formatted95 }} / 92: ${{ formatted92 }} / 98: ${{ formatted98 }}）</span>
+            <!-- Live CPC Status Indicator with Raw Data Link -->
+            <div v-if="inputMode === 'CPC'" class="cpc-status-bar" :class="{ 'is-loading': isFetchingPrices }">
+              <div v-if="isFetchingPrices" class="status-fetching">
+                <span class="loading-spinner"></span>
+                <span>⏳ 正在連線台灣中油 OpenData 驗證牌價...（填寫欄位鎖定中）</span>
+              </div>
+              <div v-else class="status-ready-box">
+                <span class="status-ready">🟢 已成功載入中油 OpenData 即時牌價 ({{ fetchTime }})</span>
+                <button type="button" class="raw-data-btn" @click="showRawModal = true">
+                  📄 查看中油原始資料
+                </button>
+              </div>
             </div>
 
             <!-- CPC Fuel Type & Price Calculator -->
@@ -131,7 +139,12 @@
               <div class="grid-2">
                 <div class="form-group">
                   <label class="form-label">選擇中油油種</label>
-                  <select v-model="selectedFuelType" class="form-control form-select" @change="onFuelTypeChange">
+                  <select 
+                    v-model="selectedFuelType" 
+                    class="form-control form-select" 
+                    :disabled="isFetchingPrices"
+                    @change="onFuelTypeChange"
+                  >
                     <option value="95">95 無鉛汽油 (NT$ {{ formatted95 }} / L)</option>
                     <option value="92">92 無鉛汽油 (NT$ {{ formatted92 }} / L)</option>
                     <option value="98">98 無鉛汽油 (NT$ {{ formatted98 }} / L)</option>
@@ -146,6 +159,7 @@
                     step="0.1" 
                     min="1" 
                     class="form-control" 
+                    :disabled="isFetchingPrices"
                     @input="calculateLiters"
                   />
                 </div>
@@ -163,6 +177,7 @@
                 class="form-control" 
                 placeholder="如: 150" 
                 required 
+                :disabled="isFetchingPrices && inputMode === 'CPC'"
                 @input="calculateLiters"
               />
             </div>
@@ -177,6 +192,7 @@
                 placeholder="如: 4.688" 
                 required 
                 :readonly="inputMode === 'CPC'"
+                :disabled="isFetchingPrices && inputMode === 'CPC'"
               />
               <small v-if="inputMode === 'CPC'" class="calc-hint">
                 ⚡ 精確算式：NT$ {{ form.cost || 0 }} ÷ {{ unitPrice }} 元/L = {{ exactLitersFormula }} L
@@ -186,11 +202,30 @@
 
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" @click="showModal = false">取消</button>
-            <button type="submit" class="btn btn-primary" :disabled="isSubmitting">
+            <button type="submit" class="btn btn-primary" :disabled="isSubmitting || (isFetchingPrices && inputMode === 'CPC')">
               {{ isSubmitting ? '儲存中...' : (isEditing ? '更新紀錄' : '確認新增') }}
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Raw CPC OpenData Inspection Modal -->
+    <div v-if="showRawModal" class="modal-overlay" @click.self="showRawModal = false">
+      <div class="modal-content" style="max-width: 680px;">
+        <div class="modal-header">
+          <h3 class="modal-title">📄 台灣中油官方 OpenData 原始數據</h3>
+          <button class="btn btn-icon btn-secondary" @click="showRawModal = false">✕</button>
+        </div>
+        <div class="raw-data-container">
+          <p class="raw-intro">
+            以下為連線台灣中油 OpenData 網址 (<a href="https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx" target="_blank" rel="noopener">ListPriceVIP.aspx</a>) 取得之真實 OpenData XML 回應：
+          </p>
+          <pre class="raw-code-box"><code>{{ rawCpcData || '尚未抓取到原始資料' }}</code></pre>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" @click="showRawModal = false">關閉</button>
+        </div>
       </div>
     </div>
   </div>
@@ -214,15 +249,17 @@ const props = defineProps({
 const emit = defineEmits(['save-fuel', 'delete-fuel']);
 
 const showModal = ref(false);
+const showRawModal = ref(false);
 const isEditing = ref(false);
 const isSubmitting = ref(false);
 const isFetchingPrices = ref(false);
 
 const inputMode = ref('CPC');
 const selectedFuelType = ref('95');
-const unitPrice = ref(32.0); // 最新中油官方 95 牌價 32.0 元
+const unitPrice = ref(32.0);
+const fetchTime = ref('');
+const rawCpcData = ref('');
 
-// 最新中油官方 115/07/27 最新牌價對照
 const cpcPrices = ref({
   '92': 30.5,
   '95': 32.0,
@@ -245,16 +282,18 @@ const form = ref({
 async function loadCpcPrices() {
   isFetchingPrices.value = true;
   try {
-    const livePrices = await fetchCpcOfficialPrices();
-    if (livePrices) {
+    const res = await fetchCpcOfficialPrices();
+    if (res && res.prices) {
       cpcPrices.value = {
-        '92': Number(livePrices['92'] || 30.5),
-        '95': Number(livePrices['95'] || 32.0),
-        '98': Number(livePrices['98'] || 34.0)
+        '92': Number(res.prices['92'] || 30.5),
+        '95': Number(res.prices['95'] || 32.0),
+        '98': Number(res.prices['98'] || 34.0)
       };
       if (selectedFuelType.value !== 'CUSTOM' && cpcPrices.value[selectedFuelType.value]) {
         unitPrice.value = cpcPrices.value[selectedFuelType.value];
       }
+      fetchTime.value = res.fetchedAt || new Date().toLocaleTimeString('zh-TW');
+      rawCpcData.value = res.rawText || '';
       calculateLiters();
     }
   } catch(e) {
@@ -548,10 +587,42 @@ defineExpose({ openAddModal });
 
 .cpc-status-bar {
   font-size: 0.75rem;
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: rgba(16, 185, 129, 0.1);
   border-radius: var(--radius-sm);
   margin-bottom: 10px;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.cpc-status-bar.is-loading {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.25);
+}
+
+.status-fetching {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(6, 182, 212, 0.3);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.status-ready-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .status-ready {
@@ -559,8 +630,15 @@ defineExpose({ openAddModal });
   font-weight: 600;
 }
 
-.status-fetching {
+.raw-data-btn {
+  background: none;
+  border: none;
   color: var(--accent-cyan);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
 }
 
 .cpc-calc-panel {
@@ -575,6 +653,30 @@ defineExpose({ openAddModal });
   font-weight: 600;
 }
 
+.raw-intro {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.raw-intro a {
+  color: var(--accent-cyan);
+}
+
+.raw-code-box {
+  background: #080c14;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  max-height: 350px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: #a7f3d0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 @media (max-width: 500px) {
   .stats-card {
     grid-template-columns: 1fr;
@@ -582,6 +684,10 @@ defineExpose({ openAddModal });
   .calc-mode-header {
     flex-direction: column;
     align-items: stretch;
+  }
+  .status-ready-box {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

@@ -136,7 +136,7 @@ export async function pingBackend(webAppUrl) {
 }
 
 /**
- * 取得中油官方最新牌價 (Fetch Official CPC Oil Prices)
+ * 取得中油官方最新牌價與原始 XML 資料
  */
 export async function fetchCpcOfficialPrices() {
   const config = getAppConfig();
@@ -148,45 +148,46 @@ export async function fetchCpcOfficialPrices() {
       const res = await fetch(url);
       const json = await res.json();
       if (json && json.success && json.data) {
-        return json.data;
+        return {
+          prices: {
+            '92': Number(json.data['92'] || 30.5),
+            '95': Number(json.data['95'] || 32.0),
+            '98': Number(json.data['98'] || 34.0)
+          },
+          rawText: JSON.stringify(json.data, null, 2),
+          fetchedAt: new Date().toLocaleTimeString('zh-TW')
+        };
       }
     } catch(e) {
       console.warn('Failed to fetch CPC prices from GAS backend:', e);
     }
   }
 
-  // 2. Fetch live CPC OpenData via AllOrigins proxy to bypass browser CORS
-  try {
-    const cpcUrl = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(cpcUrl)}`;
-    const res = await fetch(proxyUrl);
-    const xmlText = await res.text();
+  // 2. Fetch live CPC OpenData via AllOrigins proxy
+  const cpcUrl = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(cpcUrl)}`;
+  const res = await fetch(proxyUrl);
+  const xmlText = await res.text();
 
-    const prices = {
-      '92': 30.5,
-      '95': 32.0,
-      '98': 34.0
-    };
-
-    const m92 = xmlText.match(/92無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-    if (m92 && m92[1]) prices['92'] = parseFloat(m92[1]);
-
-    const m95 = xmlText.match(/95無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-    if (m95 && m95[1]) prices['95'] = parseFloat(m95[1]);
-
-    const m98 = xmlText.match(/98無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-    if (m98 && m98[1]) prices['98'] = parseFloat(m98[1]);
-
-    return prices;
-  } catch(e) {
-    console.warn('CORS proxy fetch error, fallback to latest official CPC price:', e);
-  }
-
-  // 3. Fallback to latest official CPC price as of 115/07/27
-  return {
+  const prices = {
     '92': 30.5,
     '95': 32.0,
     '98': 34.0
+  };
+
+  const m92 = xmlText.match(/92無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+  if (m92 && m92[1]) prices['92'] = parseFloat(m92[1]);
+
+  const m95 = xmlText.match(/95無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+  if (m95 && m95[1]) prices['95'] = parseFloat(m95[1]);
+
+  const m98 = xmlText.match(/98無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+  if (m98 && m98[1]) prices['98'] = parseFloat(m98[1]);
+
+  return {
+    prices,
+    rawText: xmlText.trim(),
+    fetchedAt: new Date().toLocaleTimeString('zh-TW')
   };
 }
 
