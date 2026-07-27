@@ -87,14 +87,80 @@
             </div>
           </div>
 
+          <!-- Input Mode Switcher (Direct vs CPC Calculator) -->
+          <div class="calc-mode-box">
+            <div class="calc-mode-tabs">
+              <button 
+                type="button" 
+                class="mode-btn" 
+                :class="{ active: inputMode === 'CPC' }"
+                @click="switchInputMode('CPC')"
+              >
+                🇹🇼 中油油價快速換算
+              </button>
+              <button 
+                type="button" 
+                class="mode-btn" 
+                :class="{ active: inputMode === 'DIRECT' }"
+                @click="switchInputMode('DIRECT')"
+              >
+                ✏️ 直接輸入公升數
+              </button>
+            </div>
+
+            <!-- CPC Fuel Type & Price Calculator -->
+            <div v-if="inputMode === 'CPC'" class="cpc-calc-panel">
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">選擇中油油種</label>
+                  <select v-model="selectedFuelType" class="form-control form-select" @change="onFuelTypeChange">
+                    <option value="95">95 無鉛汽油 (約 NT$ {{ cpcPrices['95'] }}/L)</option>
+                    <option value="92">92 無鉛汽油 (約 NT$ {{ cpcPrices['92'] }}/L)</option>
+                    <option value="98">98 無鉛汽油 (約 NT$ {{ cpcPrices['98'] }}/L)</option>
+                    <option value="CUSTOM">自訂單價...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">每公升單價 (元/L)</label>
+                  <input 
+                    v-model.number="unitPrice" 
+                    type="number" 
+                    step="0.1" 
+                    min="1" 
+                    class="form-control" 
+                    @input="calculateLiters"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="grid-2">
             <div class="form-group">
-              <label class="form-label">加油公升數 (L) *</label>
-              <input v-model.number="form.liters" type="number" step="0.01" min="0.1" class="form-control" placeholder="如: 5.5" required />
+              <label class="form-label">加油金額 (NT$) *</label>
+              <input 
+                v-model.number="form.cost" 
+                type="number" 
+                min="0" 
+                class="form-control" 
+                placeholder="如: 150" 
+                required 
+                @input="calculateLiters"
+              />
             </div>
             <div class="form-group">
-              <label class="form-label">總共花費 (NT$) *</label>
-              <input v-model.number="form.cost" type="number" min="0" class="form-control" placeholder="如: 175" required />
+              <label class="form-label">公升數 (L) *</label>
+              <input 
+                v-model.number="form.liters" 
+                type="number" 
+                step="0.01" 
+                min="0.01" 
+                class="form-control" 
+                placeholder="如: 4.84" 
+                required 
+                :readonly="inputMode === 'CPC'"
+              />
+              <small v-if="inputMode === 'CPC'" class="calc-hint">💡 已根據金額 NT$ {{ form.cost || 0 }} ÷ 每升 {{ unitPrice }} 元自動算出</small>
             </div>
           </div>
 
@@ -130,6 +196,17 @@ const showModal = ref(false);
 const isEditing = ref(false);
 const isSubmitting = ref(false);
 
+const inputMode = ref('CPC'); // 'CPC' or 'DIRECT'
+const selectedFuelType = ref('95');
+const unitPrice = ref(31.0); // 預設中油 95 無鉛參考油價
+
+// 中油常用預設參考油價
+const cpcPrices = {
+  '92': 29.5,
+  '95': 31.0,
+  '98': 33.0
+};
+
 const form = ref({
   id: '',
   vehicle_id: '',
@@ -139,11 +216,32 @@ const form = ref({
   cost: ''
 });
 
+function switchInputMode(mode) {
+  inputMode.value = mode;
+  if (mode === 'CPC') {
+    calculateLiters();
+  }
+}
+
+function onFuelTypeChange() {
+  if (selectedFuelType.value !== 'CUSTOM' && cpcPrices[selectedFuelType.value]) {
+    unitPrice.value = cpcPrices[selectedFuelType.value];
+  }
+  calculateLiters();
+}
+
+function calculateLiters() {
+  if (inputMode.value === 'CPC' && form.value.cost > 0 && unitPrice.value > 0) {
+    const l = form.value.cost / unitPrice.value;
+    form.value.liters = Number(l.toFixed(2));
+  }
+}
+
 // Compute fuel logs filtered by active vehicle, sorted by mileage descending, with km/L calculated
 const computedLogs = computed(() => {
   const list = props.fuelLogs
     .filter(f => f.vehicle_id === props.activeVehicleId)
-    .sort((a, b) => Number(a.mileage) - Number(b.mileage)); // Sort asc first for math
+    .sort((a, b) => Number(a.mileage) - Number(b.mileage));
 
   const result = list.map((item, idx) => {
     let kmPerL = '--';
@@ -161,7 +259,7 @@ const computedLogs = computed(() => {
     };
   });
 
-  return result.reverse(); // Reverse to display latest first
+  return result.reverse();
 });
 
 // Summary calculations
@@ -196,6 +294,9 @@ const overallAvgKmL = computed(() => {
 
 function openAddModal() {
   isEditing.value = false;
+  inputMode.value = 'CPC';
+  selectedFuelType.value = '95';
+  unitPrice.value = cpcPrices['95'];
   form.value = {
     id: '',
     vehicle_id: props.activeVehicleId,
@@ -209,6 +310,7 @@ function openAddModal() {
 
 function openEditModal(log) {
   isEditing.value = true;
+  inputMode.value = 'DIRECT';
   form.value = { ...log };
   showModal.value = true;
 }
@@ -338,6 +440,51 @@ defineExpose({ openAddModal });
   justify-content: flex-end;
   gap: 10px;
   margin-top: 12px;
+}
+
+/* CPC Calculator Panel styling */
+.calc-mode-box {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.calc-mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-btn.active {
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--accent-cyan);
+  border-color: rgba(6, 182, 212, 0.4);
+}
+
+.cpc-calc-panel {
+  padding-top: 4px;
+}
+
+.calc-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  margin-top: 4px;
 }
 
 @media (max-width: 500px) {
