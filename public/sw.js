@@ -1,15 +1,6 @@
-const CACHE_NAME = 'scooter-tracker-v1';
-const urlsToCache = [
-  './',
-  './index.html',
-  './manifest.json'
-];
+const CACHE_NAME = 'scooter-tracker-v2';
 
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
-  );
   self.skipWaiting();
 });
 
@@ -29,17 +20,17 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  // Pass through non-GET and external API calls directly
-  if (event.request.method !== 'GET' || event.request.url.includes('script.google.com')) {
+  // Always bypass cache for external API calls, GAS calls, and assets to get fresh code
+  if (
+    event.request.method !== 'GET' || 
+    event.request.url.includes('script.google.com') ||
+    event.request.url.includes('allorigins') ||
+    event.request.url.includes('assets')
+  ) {
     return;
   }
+
   event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        if (response) {
-          return response;
-        }
-        return fetch(event.request);
-      })
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
