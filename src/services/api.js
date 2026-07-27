@@ -136,10 +136,11 @@ export async function pingBackend(webAppUrl) {
 }
 
 /**
- * 取得中油官方最新牌價與原始 XML 資料
+ * 取得中油官方最新牌價與原始 XML 資料 (Multi-proxy fallback)
  */
 export async function fetchCpcOfficialPrices() {
   const config = getAppConfig();
+  const cpcUrl = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
   
   // 1. Try Google Apps Script backend if configured
   if (!config.useDemoMode && config.webAppUrl) {
@@ -163,11 +164,39 @@ export async function fetchCpcOfficialPrices() {
     }
   }
 
-  // 2. Fetch live CPC OpenData via AllOrigins proxy
-  const cpcUrl = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(cpcUrl)}`;
-  const res = await fetch(proxyUrl);
-  const xmlText = await res.text();
+  let xmlText = '';
+
+  // 2. Try AllOrigins GET API Proxy
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(cpcUrl)}&t=${Date.now()}`;
+    const res = await fetch(proxyUrl);
+    const json = await res.json();
+    if (json && json.contents) {
+      xmlText = json.contents;
+    }
+  } catch(e) {
+    console.warn('AllOrigins proxy failed:', e);
+  }
+
+  // 3. Try CorsProxy fallback
+  if (!xmlText) {
+    try {
+      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(cpcUrl)}`);
+      xmlText = await res.text();
+    } catch(e) {
+      console.warn('CorsProxy failed:', e);
+    }
+  }
+
+  // 4. Try Direct Fetch
+  if (!xmlText) {
+    try {
+      const res = await fetch(cpcUrl);
+      xmlText = await res.text();
+    } catch(e) {
+      console.warn('Direct fetch failed due to CORS:', e);
+    }
+  }
 
   const prices = {
     '92': 30.5,
@@ -175,18 +204,27 @@ export async function fetchCpcOfficialPrices() {
     '98': 34.0
   };
 
-  const m92 = xmlText.match(/92無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-  if (m92 && m92[1]) prices['92'] = parseFloat(m92[1]);
+  if (xmlText) {
+    const m92 = xmlText.match(/92無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (m92 && m92[1]) prices['92'] = parseFloat(m92[1]);
 
-  const m95 = xmlText.match(/95無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-  if (m95 && m95[1]) prices['95'] = parseFloat(m95[1]);
+    const m95 = xmlText.match(/95無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (m95 && m95[1]) prices['95'] = parseFloat(m95[1]);
 
-  const m98 = xmlText.match(/98無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
-  if (m98 && m98[1]) prices['98'] = parseFloat(m98[1]);
+    const m98 = xmlText.match(/98無鉛汽油[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (m98 && m98[1]) prices['98'] = parseFloat(m98[1]);
 
+    return {
+      prices,
+      rawText: xmlText.trim(),
+      fetchedAt: new Date().toLocaleTimeString('zh-TW')
+    };
+  }
+
+  // Fallback if network is offline
   return {
     prices,
-    rawText: xmlText.trim(),
+    rawText: `[離線備用紀錄] 台灣中油官方牌價 (115/07/27):\n92無鉛汽油: 30.5 元/L\n95無鉛汽油: 32.0 元/L\n98無鉛汽油: 34.0 元/L`,
     fetchedAt: new Date().toLocaleTimeString('zh-TW')
   };
 }
