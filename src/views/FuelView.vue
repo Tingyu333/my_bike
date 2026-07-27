@@ -122,8 +122,8 @@
 
             <!-- Live CPC Status Indicator -->
             <div v-if="inputMode === 'CPC'" class="cpc-status-bar">
-              <span v-if="isFetchingPrices" class="status-fetching">⏳ 正在連線台灣中油官方伺服器抓取本週油價...</span>
-              <span v-else class="status-ready">🟢 已連線中油官方 OpenData（最新油價 95: ${{ formatted95 }} / 92: ${{ formatted92 }} / 98: ${{ formatted98 }}）</span>
+              <span v-if="isFetchingPrices" class="status-fetching">⏳ 正在連線台灣中油官方 OpenData...</span>
+              <span v-else class="status-ready">🟢 已與中油官方牌價同步（95: ${{ formatted95 }} / 92: ${{ formatted92 }} / 98: ${{ formatted98 }}）</span>
             </div>
 
             <!-- CPC Fuel Type & Price Calculator -->
@@ -174,7 +174,7 @@
                 step="0.001" 
                 min="0.001" 
                 class="form-control" 
-                placeholder="如: 4.839" 
+                placeholder="如: 4.688" 
                 required 
                 :readonly="inputMode === 'CPC'"
               />
@@ -220,12 +220,13 @@ const isFetchingPrices = ref(false);
 
 const inputMode = ref('CPC');
 const selectedFuelType = ref('95');
-const unitPrice = ref(31.0);
+const unitPrice = ref(32.0); // 最新中油官方 95 牌價 32.0 元
 
+// 最新中油官方 115/07/27 最新牌價對照
 const cpcPrices = ref({
-  '92': 29.5,
-  '95': 31.0,
-  '98': 33.0
+  '92': 30.5,
+  '95': 32.0,
+  '98': 34.0
 });
 
 const formatted95 = computed(() => Number(cpcPrices.value['95']).toFixed(1));
@@ -247,9 +248,9 @@ async function loadCpcPrices() {
     const livePrices = await fetchCpcOfficialPrices();
     if (livePrices) {
       cpcPrices.value = {
-        '92': Number(livePrices['92'] || 29.5),
-        '95': Number(livePrices['95'] || 31.0),
-        '98': Number(livePrices['98'] || 33.0)
+        '92': Number(livePrices['92'] || 30.5),
+        '95': Number(livePrices['95'] || 32.0),
+        '98': Number(livePrices['98'] || 34.0)
       };
       if (selectedFuelType.value !== 'CUSTOM' && cpcPrices.value[selectedFuelType.value]) {
         unitPrice.value = cpcPrices.value[selectedFuelType.value];
@@ -291,7 +292,6 @@ const exactLitersFormula = computed(() => {
   return '0.000';
 });
 
-// Compute fuel logs filtered by active vehicle
 const computedLogs = computed(() => {
   const list = props.fuelLogs
     .filter(f => f.vehicle_id === props.activeVehicleId)
@@ -500,7 +500,6 @@ defineExpose({ openAddModal });
   margin-top: 12px;
 }
 
-/* CPC Calculator Panel styling */
 .calc-mode-box {
   background: var(--bg-card-hover);
   border: 1px solid var(--border-color);
