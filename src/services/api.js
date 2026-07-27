@@ -61,32 +61,6 @@ const INITIAL_DEMO_MAINTENANCE = [
     next_date: '',
     note: '更換原廠齒輪油',
     receipt_url: ''
-  },
-  {
-    id: 'm_demo_3',
-    vehicle_id: 'v_demo_1',
-    date: '2024-03-01',
-    mileage: 5000,
-    item: '空氣濾芯',
-    cost: 350,
-    shop: '順達專業機車行',
-    next_mileage: 10000,
-    next_date: '2024-09-01',
-    note: '檢查乾淨程度後更換新品',
-    receipt_url: ''
-  },
-  {
-    id: 'm_demo_4',
-    vehicle_id: 'v_demo_1',
-    date: '2024-01-15',
-    mileage: 3000,
-    item: '火星塞',
-    cost: 250,
-    shop: '原廠服務中心',
-    next_mileage: 13000,
-    next_date: '2025-01-15',
-    note: '釕合金火星塞',
-    receipt_url: ''
   }
 ];
 
@@ -135,7 +109,6 @@ export function saveAppConfig(config) {
   localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
 }
 
-// LocalStorage helpers for Demo Mode
 function getLocalData(key, fallback) {
   const saved = localStorage.getItem(key);
   if (saved) {
@@ -151,9 +124,6 @@ function setLocalData(key, data) {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
-/**
- * Ping GAS Backend to verify Web App URL & Token
- */
 export async function pingBackend(webAppUrl) {
   if (!webAppUrl) throw new Error('Web App URL 未填寫');
   const url = `${webAppUrl}?action=ping`;
@@ -166,17 +136,51 @@ export async function pingBackend(webAppUrl) {
 }
 
 /**
- * Generic API Call handler (Supports GAS Web App & Demo LocalStorage)
+ * 取得中油官方最新牌價 (Fetch Live Official CPC Oil Prices)
  */
+export async function fetchCpcOfficialPrices() {
+  const config = getAppConfig();
+  if (!config.useDemoMode && config.webAppUrl) {
+    try {
+      const url = `${config.webAppUrl}?action=cpcPrices&t=${Date.now()}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json && json.success && json.data) {
+        return json.data;
+      }
+    } catch(e) {
+      console.warn('Failed to fetch CPC prices from GAS backend, using live fallback:', e);
+    }
+  }
+
+  // Live Fallback API
+  try {
+    const res = await fetch('https://gas.goodid.net/api/');
+    const data = await res.json();
+    if (data && data.cpc) {
+      return {
+        '92': Number(data.cpc['92'] || 29.5),
+        '95': Number(data.cpc['95'] || 31.0),
+        '98': Number(data.cpc['98'] || 33.0)
+      };
+    }
+  } catch(e) {}
+
+  // Fallback defaults if offline
+  return {
+    '92': 29.5,
+    '95': 31.0,
+    '98': 33.0
+  };
+}
+
 async function apiRequest(action, sheet, payload = null) {
   const config = getAppConfig();
 
-  // If in Demo mode or no URL specified, fallback to LocalStorage
   if (config.useDemoMode || !config.webAppUrl) {
     return handleDemoRequest(action, sheet, payload);
   }
 
-  // Live Google Apps Script request
   try {
     if (action === 'list') {
       const url = `${config.webAppUrl}?action=list&sheet=${sheet}&t=${Date.now()}`;
@@ -185,7 +189,6 @@ async function apiRequest(action, sheet, payload = null) {
       if (!json.success) throw new Error(json.error || '讀取資料失敗');
       return json.data || [];
     } else {
-      // POST requests for create, update, delete
       const body = {
         action,
         sheet,
@@ -207,9 +210,6 @@ async function apiRequest(action, sheet, payload = null) {
   }
 }
 
-/**
- * Demo Mode LocalStorage implementation
- */
 function handleDemoRequest(action, sheet, payload) {
   let key = STORAGE_KEY_VEHICLES;
   let initialData = INITIAL_DEMO_VEHICLES;
@@ -252,7 +252,6 @@ function handleDemoRequest(action, sheet, payload) {
   return Promise.reject(new Error('Unknown demo action'));
 }
 
-// Higher-level vehicle API
 export const VehiclesAPI = {
   list: () => apiRequest('list', 'Vehicles'),
   create: (item) => apiRequest('create', 'Vehicles', item),
@@ -260,7 +259,6 @@ export const VehiclesAPI = {
   delete: (id) => apiRequest('delete', 'Vehicles', { id })
 };
 
-// Higher-level maintenance API
 export const MaintenanceAPI = {
   list: () => apiRequest('list', 'MaintenanceRecords'),
   create: (item) => apiRequest('create', 'MaintenanceRecords', item),
@@ -268,7 +266,6 @@ export const MaintenanceAPI = {
   delete: (id) => apiRequest('delete', 'MaintenanceRecords', { id })
 };
 
-// Higher-level fuel log API
 export const FuelAPI = {
   list: () => apiRequest('list', 'FuelLogs'),
   create: (item) => apiRequest('create', 'FuelLogs', item),

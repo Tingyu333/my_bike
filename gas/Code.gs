@@ -17,7 +17,7 @@ function getApiToken() {
   var props = PropertiesService.getScriptProperties();
   var token = props.getProperty('API_TOKEN');
   if (!token) {
-    token = 'my-scooter-secret-token'; // 預設密碼，建議手動或執行 setupSpreadsheet 修改
+    token = 'my-scooter-secret-token';
     props.setProperty('API_TOKEN', token);
   }
   return token;
@@ -29,19 +29,16 @@ function getApiToken() {
 function setupSpreadsheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  // 1. 設定 Token
   var props = PropertiesService.getScriptProperties();
   if (!props.getProperty('API_TOKEN')) {
     props.setProperty('API_TOKEN', 'my-scooter-secret-token');
     Logger.log('已設定預設 API_TOKEN 為: my-scooter-secret-token');
   }
 
-  // 2. 初始化 Vehicles 頁籤
   var vSheet = ss.getSheetByName('Vehicles');
   if (!vSheet) {
     vSheet = ss.insertSheet('Vehicles');
     vSheet.appendRow(['id', 'name', 'plate', 'purchase_date', 'note']);
-    // 寫入預設車輛範例
     vSheet.appendRow([
       'v1',
       '勁戰 6 代 (Cygnus Gryphus)',
@@ -51,7 +48,6 @@ function setupSpreadsheet() {
     ]);
   }
 
-  // 3. 初始化 MaintenanceRecords 頁籤
   var mSheet = ss.getSheetByName('MaintenanceRecords');
   if (!mSheet) {
     mSheet = ss.insertSheet('MaintenanceRecords');
@@ -59,18 +55,12 @@ function setupSpreadsheet() {
       'id', 'vehicle_id', 'date', 'mileage', 'item', 
       'cost', 'shop', 'next_mileage', 'next_date', 'note', 'receipt_url'
     ]);
-    // 寫入保養範例
     mSheet.appendRow([
       'm1', 'v1', '2024-01-10', 5000, '機油',
       450, '順達機車行', 6000, '2024-04-10', '更換全合成機油 10W40', ''
     ]);
-    mSheet.appendRow([
-      'm2', 'v1', '2024-01-10', 5000, '齒輪油',
-      100, '順達機車行', 7000, '', '原廠齒輪油', ''
-    ]);
   }
 
-  // 4. 初始化 FuelLogs 頁籤
   var fSheet = ss.getSheetByName('FuelLogs');
   if (!fSheet) {
     fSheet = ss.insertSheet('FuelLogs');
@@ -79,7 +69,6 @@ function setupSpreadsheet() {
     fSheet.appendRow(['f2', 'v1', '2024-01-15', 5080, 5.5, 170]);
   }
 
-  // 刪除預設 Sheet1 / 工作表1
   var defaultSheet = ss.getSheetByName('工作表1') || ss.getSheetByName('Sheet1');
   if (defaultSheet && ss.getSheets().length > 1) {
     try {
@@ -88,6 +77,45 @@ function setupSpreadsheet() {
   }
 
   Logger.log('Spreadsheet 初始化完畢！');
+}
+
+/**
+ * 抓取台灣中油 (CPC) 官方即時浮動油價 OpenData
+ */
+function fetchCpcOfficialPrices() {
+  try {
+    var url = 'https://vipmember.cpc.com.tw/OpenData/ListPriceVIP.aspx';
+    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var xmlText = response.getContentText();
+
+    // 預設參考牌價（備用）
+    var prices = {
+      '92': 29.5,
+      '95': 31.0,
+      '98': 33.0,
+      'diesel': 27.0,
+      'updated_at': Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
+    };
+
+    // 解析中油 XML 牌價
+    var matches92 = xmlText.match(/<產品名稱>92無鉛汽油<\/產品名稱>[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (matches92 && matches92[1]) prices['92'] = parseFloat(matches92[1]);
+
+    var matches95 = xmlText.match(/<產品名稱>95無鉛汽油<\/產品名稱>[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (matches95 && matches95[1]) prices['95'] = parseFloat(matches95[1]);
+
+    var matches98 = xmlText.match(/<產品名稱>98無鉛汽油<\/產品名稱>[\s\S]*?<參考牌價>([\d\.]+)<\/參考牌價>/);
+    if (matches98 && matches98[1]) prices['98'] = parseFloat(matches98[1]);
+
+    return prices;
+  } catch (err) {
+    return {
+      '92': 29.5,
+      '95': 31.0,
+      '98': 33.0,
+      'error': err.toString()
+    };
+  }
 }
 
 /**
@@ -100,6 +128,11 @@ function doGet(e) {
 
     if (action === 'ping') {
       return jsonResponse({ success: true, message: 'Scooter Maintenance API is running!' });
+    }
+
+    if (action === 'cpcPrices') {
+      var prices = fetchCpcOfficialPrices();
+      return jsonResponse({ success: true, data: prices });
     }
 
     if (action === 'list') {
@@ -128,7 +161,6 @@ function doPost(e) {
       contents = JSON.parse(e.postData.contents);
     }
 
-    // Token 驗證
     var clientToken = contents.token || (e.parameter && e.parameter.token);
     var validToken = getApiToken();
 
@@ -154,11 +186,6 @@ function doPost(e) {
       var id = payload ? payload.id : contents.id;
       deleteRecord(sheetName, id);
       return jsonResponse({ success: true, data: { id: id } });
-    } else if (action === 'setToken') {
-      if (contents.newToken) {
-        PropertiesService.getScriptProperties().setProperty('API_TOKEN', contents.newToken);
-        return jsonResponse({ success: true, message: 'Token updated successfully' });
-      }
     }
 
     return jsonResponse({ success: false, error: 'Invalid POST action' });
@@ -167,18 +194,12 @@ function doPost(e) {
   }
 }
 
-/**
- * 輔助函式：將 JSON 包裝為 Google Apps Script Output
- */
 function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/**
- * 讀取 Sheet 全部資料並轉成 Object Array
- */
 function getSheetData(sheetName) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(sheetName);
@@ -214,9 +235,6 @@ function getSheetData(sheetName) {
   return result;
 }
 
-/**
- * 新增紀錄
- */
 function createRecord(sheetName, payload) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(sheetName);
@@ -239,9 +257,6 @@ function createRecord(sheetName, payload) {
   return payload;
 }
 
-/**
- * 更新紀錄
- */
 function updateRecord(sheetName, payload) {
   if (!payload.id) throw new Error('Record id is required for update');
 
@@ -274,9 +289,6 @@ function updateRecord(sheetName, payload) {
   return payload;
 }
 
-/**
- * 刪除紀錄
- */
 function deleteRecord(sheetName, id) {
   if (!id) throw new Error('Record id is required for delete');
 

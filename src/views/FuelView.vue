@@ -49,7 +49,7 @@
             </div>
             <div class="metric">
               <span class="metric-label">每公升單價</span>
-              <span class="metric-val">NT$ {{ (Number(log.cost) / Number(log.liters)).toFixed(1) }}</span>
+              <span class="metric-val">NT$ {{ (Number(log.cost) / Number(log.liters)).toFixed(2) }}</span>
             </div>
           </div>
         </div>
@@ -89,22 +89,34 @@
 
           <!-- Input Mode Switcher (Direct vs CPC Calculator) -->
           <div class="calc-mode-box">
-            <div class="calc-mode-tabs">
+            <div class="calc-mode-header">
+              <div class="calc-mode-tabs">
+                <button 
+                  type="button" 
+                  class="mode-btn" 
+                  :class="{ active: inputMode === 'CPC' }"
+                  @click="switchInputMode('CPC')"
+                >
+                  🇹🇼 中油即時牌價換算
+                </button>
+                <button 
+                  type="button" 
+                  class="mode-btn" 
+                  :class="{ active: inputMode === 'DIRECT' }"
+                  @click="switchInputMode('DIRECT')"
+                >
+                  ✏️ 手動輸入公升數
+                </button>
+              </div>
+
               <button 
+                v-if="inputMode === 'CPC'"
                 type="button" 
-                class="mode-btn" 
-                :class="{ active: inputMode === 'CPC' }"
-                @click="switchInputMode('CPC')"
+                class="btn btn-sm btn-secondary refresh-btn"
+                :disabled="isFetchingPrices"
+                @click="loadCpcPrices"
               >
-                🇹🇼 中油油價快速換算
-              </button>
-              <button 
-                type="button" 
-                class="mode-btn" 
-                :class="{ active: inputMode === 'DIRECT' }"
-                @click="switchInputMode('DIRECT')"
-              >
-                ✏️ 直接輸入公升數
+                {{ isFetchingPrices ? '抓取中...' : '🔄 同步中油即時油價' }}
               </button>
             </div>
 
@@ -114,18 +126,18 @@
                 <div class="form-group">
                   <label class="form-label">選擇中油油種</label>
                   <select v-model="selectedFuelType" class="form-control form-select" @change="onFuelTypeChange">
-                    <option value="95">95 無鉛汽油 (約 NT$ {{ cpcPrices['95'] }}/L)</option>
-                    <option value="92">92 無鉛汽油 (約 NT$ {{ cpcPrices['92'] }}/L)</option>
-                    <option value="98">98 無鉛汽油 (約 NT$ {{ cpcPrices['98'] }}/L)</option>
-                    <option value="CUSTOM">自訂單價...</option>
+                    <option value="95">95 無鉛汽油 (NT$ {{ cpcPrices['95'] }} / L)</option>
+                    <option value="92">92 無鉛汽油 (NT$ {{ cpcPrices['92'] }} / L)</option>
+                    <option value="98">98 無鉛汽油 (NT$ {{ cpcPrices['98'] }} / L)</option>
+                    <option value="CUSTOM">自訂每升單價...</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">每公升單價 (元/L)</label>
+                  <label class="form-label">每公升單價 (元 / L)</label>
                   <input 
                     v-model.number="unitPrice" 
                     type="number" 
-                    step="0.1" 
+                    step="0.01" 
                     min="1" 
                     class="form-control" 
                     @input="calculateLiters"
@@ -149,18 +161,20 @@
               />
             </div>
             <div class="form-group">
-              <label class="form-label">公升數 (L) *</label>
+              <label class="form-label">計算出公升數 (L) *</label>
               <input 
                 v-model.number="form.liters" 
                 type="number" 
-                step="0.01" 
-                min="0.01" 
+                step="0.001" 
+                min="0.001" 
                 class="form-control" 
-                placeholder="如: 4.84" 
+                placeholder="如: 4.839" 
                 required 
                 :readonly="inputMode === 'CPC'"
               />
-              <small v-if="inputMode === 'CPC'" class="calc-hint">💡 已根據金額 NT$ {{ form.cost || 0 }} ÷ 每升 {{ unitPrice }} 元自動算出</small>
+              <small v-if="inputMode === 'CPC'" class="calc-hint">
+                ⚡ 精確算式：NT$ {{ form.cost || 0 }} ÷ {{ unitPrice }} 元/L = {{ exactLitersFormula }} L
+              </small>
             </div>
           </div>
 
@@ -178,6 +192,7 @@
 
 <script setup>
 import { ref, computed } from 'vue';
+import { fetchCpcOfficialPrices } from '../services/api.js';
 
 const props = defineProps({
   fuelLogs: {
@@ -195,17 +210,18 @@ const emit = defineEmits(['save-fuel', 'delete-fuel']);
 const showModal = ref(false);
 const isEditing = ref(false);
 const isSubmitting = ref(false);
+const isFetchingPrices = ref(false);
 
-const inputMode = ref('CPC'); // 'CPC' or 'DIRECT'
+const inputMode = ref('CPC');
 const selectedFuelType = ref('95');
-const unitPrice = ref(31.0); // 預設中油 95 無鉛參考油價
+const unitPrice = ref(31.0);
 
-// 中油常用預設參考油價
-const cpcPrices = {
+// 中油官方牌價
+const cpcPrices = ref({
   '92': 29.5,
   '95': 31.0,
   '98': 33.0
-};
+});
 
 const form = ref({
   id: '',
@@ -216,6 +232,28 @@ const form = ref({
   cost: ''
 });
 
+async function loadCpcPrices() {
+  isFetchingPrices.value = true;
+  try {
+    const livePrices = await fetchCpcOfficialPrices();
+    if (livePrices) {
+      cpcPrices.value = {
+        '92': livePrices['92'] || 29.5,
+        '95': livePrices['95'] || 31.0,
+        '98': livePrices['98'] || 33.0
+      };
+      if (selectedFuelType.value !== 'CUSTOM' && cpcPrices.value[selectedFuelType.value]) {
+        unitPrice.value = cpcPrices.value[selectedFuelType.value];
+      }
+      calculateLiters();
+    }
+  } catch(e) {
+    console.warn('Load CPC prices error:', e);
+  } finally {
+    isFetchingPrices.value = false;
+  }
+}
+
 function switchInputMode(mode) {
   inputMode.value = mode;
   if (mode === 'CPC') {
@@ -224,8 +262,8 @@ function switchInputMode(mode) {
 }
 
 function onFuelTypeChange() {
-  if (selectedFuelType.value !== 'CUSTOM' && cpcPrices[selectedFuelType.value]) {
-    unitPrice.value = cpcPrices[selectedFuelType.value];
+  if (selectedFuelType.value !== 'CUSTOM' && cpcPrices.value[selectedFuelType.value]) {
+    unitPrice.value = cpcPrices.value[selectedFuelType.value];
   }
   calculateLiters();
 }
@@ -233,11 +271,19 @@ function onFuelTypeChange() {
 function calculateLiters() {
   if (inputMode.value === 'CPC' && form.value.cost > 0 && unitPrice.value > 0) {
     const l = form.value.cost / unitPrice.value;
-    form.value.liters = Number(l.toFixed(2));
+    // 取小數點後 3 位精確值
+    form.value.liters = Number(l.toFixed(3));
   }
 }
 
-// Compute fuel logs filtered by active vehicle, sorted by mileage descending, with km/L calculated
+const exactLitersFormula = computed(() => {
+  if (form.value.cost > 0 && unitPrice.value > 0) {
+    return (form.value.cost / unitPrice.value).toFixed(3);
+  }
+  return '0.000';
+});
+
+// Compute fuel logs filtered by active vehicle
 const computedLogs = computed(() => {
   const list = props.fuelLogs
     .filter(f => f.vehicle_id === props.activeVehicleId)
@@ -262,7 +308,6 @@ const computedLogs = computed(() => {
   return result.reverse();
 });
 
-// Summary calculations
 const totalLiters = computed(() => {
   return props.fuelLogs
     .filter(f => f.vehicle_id === props.activeVehicleId)
@@ -296,7 +341,7 @@ function openAddModal() {
   isEditing.value = false;
   inputMode.value = 'CPC';
   selectedFuelType.value = '95';
-  unitPrice.value = cpcPrices['95'];
+  unitPrice.value = cpcPrices.value['95'];
   form.value = {
     id: '',
     vehicle_id: props.activeVehicleId,
@@ -306,6 +351,7 @@ function openAddModal() {
     cost: ''
   };
   showModal.value = true;
+  loadCpcPrices(); // Auto fetch live prices when modal opens
 }
 
 function openEditModal(log) {
@@ -451,16 +497,24 @@ defineExpose({ openAddModal });
   margin-bottom: 16px;
 }
 
+.calc-mode-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
 .calc-mode-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  flex: 1;
 }
 
 .mode-btn {
   flex: 1;
   padding: 8px;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 700;
   background: var(--bg-input);
   color: var(--text-muted);
@@ -476,6 +530,11 @@ defineExpose({ openAddModal });
   border-color: rgba(6, 182, 212, 0.4);
 }
 
+.refresh-btn {
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
 .cpc-calc-panel {
   padding-top: 4px;
 }
@@ -485,11 +544,16 @@ defineExpose({ openAddModal });
   font-size: 0.75rem;
   color: var(--accent-cyan);
   margin-top: 4px;
+  font-weight: 600;
 }
 
 @media (max-width: 500px) {
   .stats-card {
     grid-template-columns: 1fr;
+  }
+  .calc-mode-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
